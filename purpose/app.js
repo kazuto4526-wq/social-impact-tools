@@ -12,6 +12,7 @@ import {
   newExpedition, readiness, nextStage, briefMarkdown, critiqueRequest,
   RUN_ORDER, RUN_SYSTEM, runStep, nextInRun, canRun, recordOutput, approveStep, handoffPrompt,
 } from './conduct.js';
+import { buildSnapshot, encodeSnapshot, decodeSnapshot, progressMessage, hours } from './buddy.js';
 import {
   rankProblems, purposeStatement, buildPlan, totalMinutes, weekStreak, daysSince, themeScores,
 } from './engine.js';
@@ -39,12 +40,13 @@ function load() {
   return fresh();
 }
 function fresh() {
-  return { profile: emptyProfile(), step: 0, statement: '', project: null, northStar: { vision: '' }, expeditions: [] };
+  return upgrade({ profile: emptyProfile(), step: 0, statement: '', project: null, northStar: { vision: '' }, expeditions: [] });
 }
 // Older saves predate Conduct — fill in what's missing.
 function upgrade(s) {
   s.northStar ||= { vision: '' };
   s.expeditions ||= [];
+  s.buddy ||= { name: '', notes: false, expeditions: true, lastShared: null };
   return s;
 }
 function save() {
@@ -60,7 +62,7 @@ const dots = (n) => '●'.repeat(n) + '○'.repeat(3 - n);
 // ---------- router ----------
 function route() {
   const [, name = '', arg] = location.hash.replace(/^#/, '').split('/');
-  const view = { '': home, discover, results, problems, problem, work, conduct, expedition }[name] || home;
+  const view = { '': home, discover, results, problems, problem, work, conduct, expedition, buddy }[name] || home;
   $('#app').innerHTML = view(arg);
   const navName = name === 'expedition' ? 'conduct' : name;
   document.querySelectorAll('.nav a').forEach((a) => a.classList.toggle('active', a.getAttribute('href') === `#/${navName}`));
@@ -218,6 +220,76 @@ function problem(id) {
   <div class="actions center">
     ${isCurrent ? '<a class="btn primary" href="#/work">Go to my work</a>' : `<button class="btn primary" id="choose" data-id="${p.id}">Make this my purpose problem</button>`}
   </div>`;
+}
+
+// ---------- Accountability buddy ----------
+// Inside a Claude page only a bare #anchor survives in shared links, so a
+// progress link can't carry its snapshot there; offer the message instead.
+const IN_CLAUDE_PAGE = !!window.claude;
+
+function buddySnapshot() {
+  const b = state.buddy;
+  return buildSnapshot(state, { name: b.name, notes: b.notes, expeditions: b.expeditions });
+}
+function buddyLink(snap) {
+  return `${location.origin}${location.pathname}#/buddy/${encodeSnapshot(snap)}`;
+}
+
+function buddyCard() {
+  const b = state.buddy;
+  const snap = buddySnapshot();
+  const stale = !b.lastShared || daysSince(b.lastShared) >= 7;
+  return `<section class="card buddy-card">
+    <h3>Your accountability buddy</h3>
+    <p>Commitment sticks when someone is watching. Send a friend a weekly update — they see your progress, never your reflections.</p>
+    ${stale && state.project.log.length ? `<p class="notice-inline">${b.lastShared ? `Last update sent ${daysSince(b.lastShared)} days ago.` : 'You haven’t sent an update yet.'} Send this week’s?</p>` : ''}
+    <div class="buddy-opts">
+      <label class="field"><span>Your first name (shown to your buddy)</span><input id="buddy-name" value="${esc(b.name)}" maxlength="40" placeholder="e.g. Panos"></label>
+      <label class="check"><input type="checkbox" id="buddy-notes" ${b.notes ? 'checked' : ''}> Include notes from my time log</label>
+      <label class="check"><input type="checkbox" id="buddy-exps" ${b.expeditions ? 'checked' : ''}> Include what I’m building (expeditions)</label>
+    </div>
+    <h4>Preview</h4>
+    <pre class="prompt-pre" id="buddy-preview">${esc(progressMessage(snap))}</pre>
+    <div class="actions">
+      <button class="btn primary" id="buddy-msg">Copy as message</button>
+      ${IN_CLAUDE_PAGE ? '' : '<button class="btn" id="buddy-link">Copy progress link</button>'}
+    </div>
+    <p class="fine">${IN_CLAUDE_PAGE
+      ? 'Progress links work on Purpose’s public site; inside Claude, send the message.'
+      : 'The link holds a snapshot of today’s progress inside the link itself. Nothing is uploaded; send a fresh one each week.'}</p>
+  </section>`;
+}
+
+function buddy(data) {
+  const snap = decodeSnapshot(data || '');
+  if (!snap) return `<section class="card"><h2>This progress link doesn’t work</h2>
+    <p>It may have been cut off when it was copied. Ask your friend to send it again.</p><a class="btn" href="#/">Open Purpose</a></section>`;
+  const p = snap.p && problemById(snap.p);
+  const who = snap.n || 'Your friend';
+  return `<section class="hero slim">
+    <p class="eyebrow">Accountability buddy · read-only</p>
+    <h1>${esc(who)}’s purpose work</h1>
+    <p class="fine">Snapshot from ${esc(snap.at)}. ${esc(who)} sends a fresh link to update it.</p>
+  </section>
+  ${snap.s ? `<section class="card statement-card"><p class="eyebrow">Purpose</p><p class="statement-text">${esc(snap.s)}</p>
+    ${p ? `<p class="fine">Working on <a href="#/problem/${p.id}">${p.emoji} ${esc(p.name)}</a> since ${esc(snap.since)}</p>` : ''}</section>` : ''}
+  <section class="stats">
+    <div><b>${esc(hours(snap.wk).split(' ')[0])}</b><span>hours this week</span></div>
+    <div><b>${snap.w}</b><span>week streak</span></div>
+    <div><b>${snap.md}/${snap.mt}</b><span>missions done</span></div>
+  </section>
+  <section class="card"><h3>Recent work</h3>
+    ${snap.r.length ? `<ul class="log">${snap.r.map(([d, m, note]) => `<li><time>${esc(d)}</time><b>${m} min</b><span>${esc(note)}</span></li>`).join('')}</ul>` : '<p class="fine">Nothing logged yet — a nudge might help.</p>'}
+    <p class="fine">${esc(hours(snap.h))} given in total.</p>
+  </section>
+  ${snap.x.length ? `<section class="card"><h3>What ${esc(who)} is building</h3><ul class="log">${snap.x.map(([what, st]) => `<li><span class="pill">${esc(STAGES.find((x) => x.id === st).name)}</span><span>${esc(what)}</span></li>`).join('')}</ul></section>` : ''}
+  <section class="card explorer">
+    <h3>Being a good buddy</h3>
+    <ul><li>Reply within a day — even “saw this, proud of you” counts.</li>
+      <li>Ask about the next step, not the hours.</li>
+      <li>If the streak breaks, ask what got in the way, without judgement.</li></ul>
+    <div class="actions"><a class="btn primary" href="#/discover">Find your own purpose</a></div>
+  </section>`;
 }
 
 // ---------- Conduct: the Explorer of Purpose ----------
@@ -384,6 +456,7 @@ function work() {
     ${pj.reflections.length ? `<details><summary>Past reflections (${pj.reflections.length})</summary><ul class="log">${pj.reflections.slice().reverse().map((r) => `
       <li><time>${esc(r.date)}</time><span><i>${esc(r.prompt)}</i><br>${esc(r.text)}</span></li>`).join('')}</ul></details>` : ''}
   </section>
+  ${buddyCard()}
   <section class="card explorer"><h3>Ready to build something?</h3>
     <p>Become an Explorer: decide what should exist for ${esc(p.name.toLowerCase())}, test its usefulness, and conduct AI agents to build it.</p>
     <div class="actions"><a class="btn" href="#/conduct">Open Conduct</a></div></section>
@@ -447,8 +520,8 @@ const bind = {
       startExpedition(p, b.dataset.chart === '' ? '' : p.builds[Number(b.dataset.chart)]);
     }));
     const btn = $('#choose'); if (!btn) return;
-    btn.onclick = () => {
-      if (state.project && !confirm('Switch your purpose problem? Your current project and its log are kept in your history (included in backups); missions start fresh.')) return;
+    btn.onclick = async () => {
+      if (state.project && !await askConfirm(btn, 'Switch your purpose problem? Your current project and its log move to your history (included in backups); missions start fresh.', 'Switch')) return;
       const p = problemById(btn.dataset.id);
       const past = state.project ? [...(state.history || []), { ...state.project, ended: new Date().toISOString() }] : state.history;
       state.history = past;
@@ -483,6 +556,16 @@ const bind = {
       pj.reflections.push({ date: new Date().toISOString().slice(0, 10), prompt: $('.prompt').textContent, text });
       save(); route(); flash('Reflection saved.');
     };
+    const refreshBuddy = () => { $('#buddy-preview').textContent = progressMessage(buddySnapshot()); save(); };
+    $('#buddy-name').addEventListener('input', (e) => { state.buddy.name = e.target.value; refreshBuddy(); });
+    $('#buddy-notes').addEventListener('change', (e) => { state.buddy.notes = e.target.checked; refreshBuddy(); });
+    $('#buddy-exps').addEventListener('change', (e) => { state.buddy.expeditions = e.target.checked; refreshBuddy(); });
+    const shared = () => { state.buddy.lastShared = new Date().toISOString(); save(); document.querySelector('.buddy-card .notice-inline')?.remove(); };
+    $('#buddy-msg').onclick = async () => {
+      const snap = buddySnapshot();
+      await copy(progressMessage(snap, IN_CLAUDE_PAGE ? '' : buddyLink(snap)), 'Update copied — paste it to your buddy.'); shared();
+    };
+    const bl = $('#buddy-link'); if (bl) bl.onclick = async () => { await copy(buddyLink(buddySnapshot()), 'Progress link copied.'); shared(); };
     const keep = $('#keep'); if (keep) keep.onclick = () => { pj.checkedIn90 = true; save(); route(); };
     $('#export').onclick = () => {
       const blob = new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' });
@@ -497,8 +580,8 @@ const bind = {
         state = upgrade(data); save(); route(); flash('Backup restored.');
       } catch (err) { flash(`Couldn’t import: ${err.message}`); }
     };
-    $('#reset').onclick = () => {
-      if (!confirm('Erase your profile, purpose statement and all logged work from this browser?')) return;
+    $('#reset').onclick = async (e) => {
+      if (!await askConfirm(e.currentTarget, 'Erase your profile, purpose statement, logged work and expeditions from this browser?', 'Erase everything')) return;
       state = fresh(); save(); go('#/');
     };
   },
@@ -575,8 +658,8 @@ Object.assign(bind, {
         box.textContent = aiErrorMessage(err);
       } finally { btn.disabled = false; }
     };
-    $('#del-exp').onclick = () => {
-      if (!confirm('Delete this expedition?')) return;
+    $('#del-exp').onclick = async (e) => {
+      if (!await askConfirm(e.currentTarget, 'Delete this expedition and its agents’ work?', 'Delete')) return;
       state.expeditions = state.expeditions.filter((e) => e.id !== id); save(); go('#/conduct');
     };
   },
@@ -590,16 +673,48 @@ function rerenderKeepScroll() { const y = window.scrollY; route(); window.scroll
 function slug(s) { return String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 50); }
 async function copy(text, msg) {
   try { await navigator.clipboard.writeText(text); flash(msg); }
-  catch { download('prompt.txt', text, 'text/plain'); flash('Clipboard blocked — downloaded instead.'); }
+  catch { showCopySheet(text); }
+}
+// When the clipboard is blocked, show the text selected so the viewer can copy it by hand.
+function showCopySheet(text) {
+  document.querySelector('.copy-sheet')?.remove();
+  const sheet = document.createElement('div');
+  sheet.className = 'copy-sheet'; sheet.setAttribute('role', 'dialog'); sheet.setAttribute('aria-label', 'Copy this text');
+  sheet.innerHTML = '<p>Your browser blocked automatic copying. The text is selected — copy it with your keyboard or long-press.</p><textarea readonly rows="8"></textarea><div class="actions"><button class="btn">Done</button></div>';
+  const ta = sheet.querySelector('textarea'); ta.value = text;
+  sheet.querySelector('button').onclick = () => sheet.remove();
+  document.body.append(sheet);
+  ta.focus(); ta.select();
 }
 function download(name, text, type) {
   const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(new Blob([text], { type })), download: name });
   a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 }
 
-// ---------- optional AI (same Worker protocol as Impact Compass: stream, then JSON fallback) ----------
-const AI_BASE = 'https://ask-panos.panagiotis-kokmotoss.workers.dev';
+// ---------- optional AI ----------
+// Inside a Claude page (an Artifact), ask Claude directly on the viewer's own
+// account: the page's network is sandboxed there, so the Worker is unreachable.
+// Everywhere else, use the Worker (same protocol as Impact Compass: stream,
+// then JSON fallback). `use()` is resolved once and reused.
+const claudeSample = window.claude?.use
+  ? Promise.resolve(window.claude.use('sample')).catch(() => null)
+  : Promise.resolve(null);
+
 async function askAI(systemPrompt, userMessage, onChunk) {
+  const sample = await claudeSample;
+  if (sample) {
+    try {
+      const { text } = await sample(`${systemPrompt}\n\n${userMessage}`, { onText: ({ text: t }) => onChunk?.(t), cache: false });
+      return text;
+    } catch (e) {
+      throw Object.assign(new Error(e?.message || 'sample failed'), { code: e?.code, rate: e?.code === 'rate_limited' });
+    }
+  }
+  return askWorker(systemPrompt, userMessage, onChunk);
+}
+
+const AI_BASE = 'https://ask-panos.panagiotis-kokmotoss.workers.dev';
+async function askWorker(systemPrompt, userMessage, onChunk) {
   const body = JSON.stringify({ systemPrompt, userMessage });
   const headers = { 'Content-Type': 'application/json' };
   let res;
@@ -621,9 +736,33 @@ async function askAI(systemPrompt, userMessage, onChunk) {
   return data.result;
 }
 function aiErrorMessage(err) {
-  if (err?.rate) return 'The Critic needs a minute — too many requests. Try again shortly.';
-  if (!navigator.onLine) return 'You’re offline. The Critic needs a connection; everything else works offline.';
-  return 'The Critic is unreachable right now. Your brief and prompts still work — paste them into any AI you use.';
+  if (err?.code === 'not_granted' || err?.code === 'sampling_disabled' || err?.code === 'not_declared') {
+    return 'Claude isn’t allowed on this page yet. Allow it from the page’s Permissions menu — or copy the prompt and paste it into Claude.';
+  }
+  if (err?.code === 'session_expired') return 'Your Claude session expired. Sign in again, then retry.';
+  if (err?.code === 'refused') return 'Claude declined this request. Reword the brief and try again.';
+  if (err?.code === 'cancelled') return 'Stopped.';
+  if (err?.rate) return 'Too many AI requests right now. Wait a minute, then try again.';
+  if (!navigator.onLine) return 'You’re offline. The AI needs a connection; everything else works offline.';
+  return 'The AI is unreachable right now. Your brief and prompts still work — copy them into any AI you use.';
+}
+
+/**
+ * In-page confirmation shown under the button that asked. The browser's own
+ * confirm dialog is blocked in some embedded viewers (it returns false there).
+ */
+function askConfirm(anchor, message, yesLabel) {
+  document.querySelectorAll('.confirm').forEach((el) => el.remove());
+  return new Promise((resolve) => {
+    const box = document.createElement('div');
+    box.className = 'confirm'; box.setAttribute('role', 'alertdialog');
+    box.innerHTML = `<p>${esc(message)}</p><div class="actions"><button class="btn danger-fill" data-yes>${esc(yesLabel)}</button><button class="btn" data-no>Cancel</button></div>`;
+    const done = (v) => { box.remove(); resolve(v); };
+    box.querySelector('[data-yes]').onclick = () => done(true);
+    box.querySelector('[data-no]').onclick = () => { done(false); anchor.focus(); };
+    (anchor.closest('.actions') || anchor).after(box);
+    box.querySelector('[data-no]').focus();
+  });
 }
 
 function flash(msg) {

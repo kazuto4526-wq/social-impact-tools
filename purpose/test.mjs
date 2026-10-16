@@ -222,3 +222,68 @@ test('live run: long hand-offs are trimmed', () => {
   assert.match(p, /… \[trimmed\]/);
   assert.ok(p.length < 5000);
 });
+
+// ---------- Accountability buddy ----------
+import { buildSnapshot, encodeSnapshot, decodeSnapshot, progressMessage, hours } from './buddy.js';
+
+const buddyState = () => ({
+  statement: 'I teach so every child can read — ελληνικά too.',
+  project: {
+    problemId: 'learning-poverty', started: '2026-09-01T10:00:00Z',
+    missions: [{ done: true }, { done: false }, { done: true }],
+    log: [
+      { date: '2026-09-29', minutes: 60, note: 'old' },
+      { date: '2026-10-12', minutes: 90, note: 'Tutored at the library' },
+      { date: '2026-10-14', minutes: 30, note: 'Prepared cards' },
+    ],
+    reflections: [{ text: 'SECRET reflection' }],
+  },
+  expeditions: [{ what: 'Printable tutor pack', stage: 'conduct' }],
+});
+const NOW = new Date('2026-10-15T12:00:00');
+
+test('buddy: snapshot summarises progress and leaves private things out', () => {
+  const snap = buildSnapshot(buddyState(), { name: 'Panos' }, NOW);
+  assert.equal(snap.h, 180);
+  assert.equal(snap.wk, 120, 'only this week (Mon 12 Oct onward)');
+  assert.equal(snap.md, 2); assert.equal(snap.mt, 3);
+  assert.deepEqual(snap.r[0], ['2026-10-14', 30, ''], 'notes are off by default');
+  assert.equal(buildSnapshot(buddyState(), { notes: true }, NOW).r[0][2], 'Prepared cards');
+  assert.deepEqual(buildSnapshot(buddyState(), { expeditions: false }, NOW).x, []);
+  assert.doesNotMatch(JSON.stringify(snap), /SECRET/);
+  assert.equal(buildSnapshot({ project: null }), null);
+});
+
+test('buddy: encode/decode round-trips, including non-ASCII', () => {
+  const snap = buildSnapshot(buddyState(), { name: 'Πάνος', notes: true }, NOW);
+  const enc = encodeSnapshot(snap);
+  assert.match(enc, /^[A-Za-z0-9_-]+$/, 'safe in a URL fragment');
+  assert.deepEqual(decodeSnapshot(enc), snap);
+});
+
+test('buddy: decode rejects or clamps hostile links', () => {
+  assert.equal(decodeSnapshot('not base64!!'), null);
+  assert.equal(decodeSnapshot(encodeSnapshot({ v: 2 })), null);
+  const evil = decodeSnapshot(encodeSnapshot({
+    v: 1, n: 'x'.repeat(500), s: { a: 1 }, p: '../../etc', h: -5, wk: 'lots', w: 1e12,
+    r: [['2026-10-01', 10, 'ok'], ['<img onerror>', 5, 'x'], 'junk'], x: [['A', 'hacked'], ['B', 'ship']],
+  }));
+  assert.equal(evil.n.length, 40);
+  assert.equal(evil.s, '');
+  assert.equal(evil.p, null);
+  assert.deepEqual([evil.h, evil.wk, evil.w], [0, 0, 1e7]);
+  assert.deepEqual(evil.r, [['2026-10-01', 10, 'ok']]);
+  assert.deepEqual(evil.x, [['B', 'ship']]);
+});
+
+test('buddy: message reads naturally with and without a link', () => {
+  const snap = buildSnapshot(buddyState(), {}, NOW);
+  const m = progressMessage(snap, 'https://example.org/#/buddy/abc');
+  assert.match(m, /Working on: 📖 Children who can’t read \(since 2026-09-01\)/);
+  assert.match(m, /This week: 2 hours · \d+-week streak · 2\/3 missions done · 3 hours in total/);
+  assert.match(m, /Latest: 2026-10-14 — 30 min\n/);
+  assert.match(m, /Building: Printable tutor pack \(Conducting\)/);
+  assert.match(m, /Check on me: https:\/\/example\.org/);
+  assert.match(progressMessage(snap), /keep me honest/);
+  assert.equal(hours(60), '1 hour'); assert.equal(hours(90), '1.5 hours');
+});

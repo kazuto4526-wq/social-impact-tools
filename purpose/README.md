@@ -36,7 +36,7 @@ their time, sized to the life they have.
      (Scout, Architect, Builder, Critic, Measurer, Storyteller), each carrying
      your North Star and brief, plus the whole brief as Markdown;
    - or play it **live in the app**: Scout → Architect → Critic → Measurer →
-     Storyteller run one at a time on the AI Worker. Nothing moves on until
+     Storyteller run one at a time on the AI. Nothing moves on until
      the Explorer approves it; their edits and written direction are what the
      next agent receives, and re-running a step clears the ones after it.
      The Builder stays copy-paste (real building happens in a coding agent),
@@ -45,11 +45,23 @@ their time, sized to the life they have.
    - move it through Charting → Conducting → Shipped → Learning and record
      **what changed for real people**.
 
-Everything is stored in `localStorage`. No account, no server, no tracking. The one
-exceptions are the optional “Ask the Critic” and live-run buttons, which send
-that expedition's brief and approved hand-offs (never the profile or logs) to
-the AI Worker also used by Impact Compass.
-Export/import a JSON backup to move devices.
+5. **Accountability buddy.** From *My work*, send a friend a weekly update:
+   a plain-text message (for WhatsApp, Signal, email) and, on the public
+   site, a **progress link** that opens a read-only page with your purpose,
+   hours this week, streak, missions and recent work. You choose whether
+   log notes and expeditions are included; reflections never are. The link
+   carries the snapshot inside its `#fragment`, so there is no server and
+   nothing is uploaded — send a fresh one each week (the app nudges you
+   after 7 days).
+
+Everything is stored in `localStorage`. No account, no server, no tracking. The
+exceptions are the optional AI buttons in Conduct (Ask the Critic and the
+live run), which send that expedition's brief and approved hand-offs —
+never the profile, logs or reflections — to an AI:
+- **inside a Claude page (Artifact)** the app asks Claude directly on the
+  viewer's own account (the `sample` capability; the viewer is asked to
+  allow it the first time);
+- **everywhere else** it uses the AI Worker shared with Impact Compass.
 
 ## Files
 
@@ -58,7 +70,8 @@ Export/import a JSON backup to move devices.
 | `data.js` | Content: themes, values, strengths, capacity levels, prompts, and the 16 purpose problems. Editorial rules are in its header. |
 | `engine.js` | Pure logic (no DOM): theme scoring, problem ranking, purpose statement, plan building, streaks. |
 | `conduct.js` | Pure logic for Conduct: usefulness gate, stages, agent role prompts, Markdown brief, critique request, and the live run (order, gating, approvals, hand-off prompts). |
-| `app.js` | Hash-routed UI (`#/`, `#/discover`, `#/results`, `#/problems`, `#/problem/<id>`, `#/work`, `#/conduct`, `#/expedition/<id>`). |
+| `buddy.js` | Pure logic for the accountability buddy: snapshot, link encoding, strict decoding of untrusted links, message text. |
+| `app.js` | Hash-routed UI (`#/`, `#/discover`, `#/results`, `#/problems`, `#/problem/<id>`, `#/work`, `#/conduct`, `#/expedition/<id>`, `#/buddy/<snapshot>`). |
 | `app.css` | Styles, light + dark. |
 | `sw.js` | Service worker. **Bump `CACHE_NAME` whenever any asset changes** — assets are cache-first. |
 | `test.mjs` | Data-integrity + engine tests (Node's built-in runner, zero deps). |
@@ -81,22 +94,8 @@ sentence “I use … to help ___”. Give at least one mission at each size, ro
 keyed by strength ids, approximate figures and named sources. Then run
 `npm test` and bump `CACHE_NAME` in `sw.js`.
 
-## Moving to its own repository
-
-This folder is self-contained (all paths are relative). To split it out
-with its history into a new, empty GitHub repo:
-
-```sh
-git subtree split --prefix=purpose -b purpose-only
-git push git@github.com:<you>/purpose.git purpose-only:main
-```
-
-Then copy `.github/workflows/purpose-test.yml` across, dropping the
-`working-directory` and `paths` lines.
-
 ## Ideas for next steps
 
 - Optional AI coach for reflections and the purpose statement.
-- Accountability buddy: share a read-only progress link with a friend.
 - Local opportunities: link problems to volunteering/job boards by location.
 - Translations (Greek first, like Impact Compass).
