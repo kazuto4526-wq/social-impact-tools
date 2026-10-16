@@ -1,13 +1,17 @@
 /**
  * app.js — hash-routed UI for Purpose. State lives in localStorage only;
- * nothing leaves the device except when the user presses "Ask the Critic",
- * which sends that one brief to the AI Worker.
+ * nothing leaves the device except when the user presses "Ask the Critic" or
+ * runs a live orchestra step, which send that expedition's brief (and its
+ * approved hand-offs) to the AI Worker.
  *
  * Routes: #/  #/discover  #/results  #/problems  #/problem/<id>  #/work
  *         #/conduct  #/expedition/<id>
  */
 import { THEMES, VALUES, STRENGTHS, CAPACITY, PROMPTS, PROBLEMS, USEFULNESS, READY_AT, STAGES, ROLES } from './data.js';
-import { newExpedition, readiness, nextStage, rolePrompt, briefMarkdown, critiqueRequest } from './conduct.js';
+import {
+  newExpedition, readiness, nextStage, briefMarkdown, critiqueRequest,
+  RUN_ORDER, RUN_SYSTEM, runStep, nextInRun, canRun, recordOutput, approveStep, handoffPrompt,
+} from './conduct.js';
 import {
   rankProblems, purposeStatement, buildPlan, totalMinutes, weekStreak, daysSince, themeScores,
 } from './engine.js';
@@ -92,7 +96,7 @@ function home() {
     <p>Set your North Star, choose what the world needs that doesn’t exist yet, test that it’s genuinely useful — then conduct a team of AI agents to build it. You’re the conductor of intelligence and the author of its meaning.</p>
     <div class="actions"><a class="btn primary" href="#/conduct">Open Conduct</a></div>
   </section>
-  <p class="fine">Private by design: everything stays in this browser. No account, no tracking. The only exception is the optional “Ask the Critic” button, which sends that one brief to an AI service.</p>`;
+  <p class="fine">Private by design: everything stays in this browser. No account, no tracking. The only exceptions are the optional AI buttons in Conduct, which send that one brief to an AI service.</p>`;
 }
 
 const STEPS = ['values', 'themes', 'strengths', 'answers', 'capacity'];
@@ -247,6 +251,36 @@ function conduct() {
   </section>`;
 }
 
+function liveRun(x) {
+  const next = nextInRun(x);
+  const steps = RUN_ORDER.map((id) => {
+    const role = ROLES.find((r) => r.id === id);
+    const step = runStep(x, id);
+    const status = step?.approved ? 'approved' : step ? 'review' : canRun(x, id) ? 'ready' : 'waiting';
+    const label = { approved: '✓ Approved', review: 'Awaiting your review', ready: 'Ready to run', waiting: 'Waiting' }[status];
+    const after = RUN_ORDER[RUN_ORDER.indexOf(id) + 1];
+    const nextName = after ? ROLES.find((r) => r.id === after).name : 'the Builder';
+    return `<li class="run-step ${status}" id="run-${id}">
+      <div class="run-head"><b>${role.emoji} ${esc(role.name)}</b><span class="run-status">${label}</span></div>
+      ${step ? `<label class="field"><span>Output — edit anything before you approve it</span>
+        <textarea data-run-output="${id}" rows="8" ${step.approved ? 'readonly' : ''}>${esc(step.output)}</textarea></label>
+        ${step.approved && !step.note ? '' : `<label class="field"><span>Your direction to ${esc(nextName)} (optional)</span>
+        <input data-run-note="${id}" value="${esc(step.note)}" placeholder="e.g. Focus on printable materials — no phones" ${step.approved ? 'readonly' : ''}></label>`}` : ''}
+      <div class="actions">
+        ${!step && status === 'ready' ? `<button class="btn primary small" data-run="${id}">Run ${esc(role.name)}</button>` : ''}
+        ${step && !step.approved ? `<button class="btn primary small" data-approve="${id}">Approve &amp; hand to ${esc(nextName)}</button>` : ''}
+        ${step && canRun(x, id) ? `<button class="btn small" data-run="${id}">${step.approved ? 'Re-run' : 'Run again'}</button>` : ''}
+      </div>
+    </li>`;
+  }).join('');
+  return `<div class="live-run">
+    <h4>Live run — conduct it here</h4>
+    <p class="fine">Each agent runs in turn on the AI service. Nothing moves on until you approve it, and your edits and direction are what the next agent receives. Re-running a step clears the steps after it.</p>
+    <ol class="run-steps">${steps}</ol>
+    ${next ? '' : '<p class="notice-inline">The orchestra has played. The Builder’s “Copy prompt” now carries every approved step — hand it to your coding agent.</p>'}
+  </div>`;
+}
+
 function rankedForSelect() {
   return hasProfile() ? rankProblems(state.profile).map((r) => r.problem) : PROBLEMS;
 }
@@ -284,7 +318,8 @@ function expedition(id) {
     <ul class="roles">${ROLES.map((role) => `<li><b>${role.emoji} ${esc(role.name)}</b><span>${esc(role.job)}</span>
       <div class="actions"><button class="btn small" data-copy-role="${role.id}">Copy prompt</button><button class="link" data-show-role="${role.id}">Preview</button></div>
       <pre class="prompt-pre" id="pre-${role.id}" hidden></pre></li>`).join('')}</ul>
-    <div class="actions"><button class="btn" id="copy-brief">Copy full brief (Markdown)</button><button class="btn" id="dl-brief">Download brief</button></div>`
+    <div class="actions"><button class="btn" id="copy-brief">Copy full brief (Markdown)</button><button class="btn" id="dl-brief">Download brief</button></div>
+    ${liveRun(x)}`
     : `<p>Not yet. First:</p><ul class="missing">${r.missing.slice(0, 3).map((m) => `<li>${esc(m)}</li>`).join('')}</ul>`}
   </section>
   <section class="card">
@@ -490,10 +525,10 @@ Object.assign(bind, {
       x.checks[cb.dataset.check] = cb.checked; save(); rerenderKeepScroll();
       if (readiness(x).ready && cb.checked) flash('The orchestra is ready.');
     }));
-    document.querySelectorAll('[data-copy-role]').forEach((b) => b.addEventListener('click', () => copy(rolePrompt(b.dataset.copyRole, x, ctx()), `${b.dataset.copyRole} prompt copied.`)));
+    document.querySelectorAll('[data-copy-role]').forEach((b) => b.addEventListener('click', () => copy(handoffPrompt(b.dataset.copyRole, x, ctx()), `${b.dataset.copyRole} prompt copied.`)));
     document.querySelectorAll('[data-show-role]').forEach((b) => b.addEventListener('click', () => {
       const pre = $(`#pre-${b.dataset.showRole}`);
-      pre.textContent = rolePrompt(b.dataset.showRole, x, ctx()); pre.hidden = !pre.hidden;
+      pre.textContent = handoffPrompt(b.dataset.showRole, x, ctx()); pre.hidden = !pre.hidden;
     }));
     const cb = $('#copy-brief'); if (cb) cb.onclick = () => copy(briefMarkdown(x, ctx()), 'Brief copied.');
     const dl = $('#dl-brief'); if (dl) dl.onclick = () => download(`${slug(x.what) || 'expedition'}.md`, briefMarkdown(x, ctx()), 'text/markdown');
@@ -502,6 +537,32 @@ Object.assign(bind, {
       e.preventDefault(); const text = e.target.text.value.trim(); if (!text) return;
       x.outcomes.push({ date: new Date().toISOString().slice(0, 10), text }); save(); rerenderKeepScroll();
     };
+    // Live run. State changes go through conduct.js and replace the expedition in place.
+    const put = (next) => { Object.assign(x, next); save(); };
+    document.querySelectorAll('[data-run]').forEach((b) => b.addEventListener('click', async () => {
+      const id = b.dataset.run;
+      const box = $(`#run-${id}`);
+      document.querySelectorAll('[data-run],[data-approve]').forEach((el) => { el.disabled = true; });
+      const live = document.createElement('pre');
+      live.className = 'prompt-pre'; live.textContent = 'Working…';
+      box.append(live);
+      try {
+        const out = await askAI(RUN_SYSTEM, handoffPrompt(id, x, ctx()), (t) => { live.textContent = t; });
+        put(recordOutput(x, id, String(out).trim()));
+        rerenderKeepScroll();
+      } catch (err) {
+        live.textContent = aiErrorMessage(err);
+        document.querySelectorAll('[data-run],[data-approve]').forEach((el) => { el.disabled = false; });
+      }
+    }));
+    document.querySelectorAll('[data-approve]').forEach((b) => b.addEventListener('click', () => {
+      const id = b.dataset.approve;
+      const output = $(`[data-run-output="${id}"]`).value.trim();
+      if (!output) { flash('Nothing to hand off — run it again or write the output yourself.'); return; }
+      put(approveStep(x, id, { output, note: $(`[data-run-note="${id}"]`).value }));
+      rerenderKeepScroll();
+      flash(nextInRun(x) ? 'Approved — handed off.' : 'The orchestra has played.');
+    }));
     $('#critic').onclick = async () => {
       const box = $('#critique'); const btn = $('#critic');
       if (!x.what.trim()) { flash('Say what should exist first.'); return; }

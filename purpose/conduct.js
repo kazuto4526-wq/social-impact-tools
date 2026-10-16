@@ -157,3 +157,65 @@ export function critiqueRequest(exp, ctx) {
     userMessage: contextBlock(exp, ctx),
   };
 }
+
+// ---------- Live run: the orchestra plays in-app, the Explorer approves each hand-off ----------
+
+// The Builder is left out: building real software happens in a coding agent,
+// not a browser tab — its prompt stays copy-paste. Everything else can run here.
+export const RUN_ORDER = ['scout', 'architect', 'critic', 'measurer', 'storyteller'];
+const HANDOFF_CHARS = 2500; // per earlier step, to keep requests small
+
+/** exp.run = { [roleId]: { output, note, approved, at } } */
+export function runStep(exp, roleId) { return exp.run?.[roleId] || null; }
+
+/** The next role waiting to run or be approved, or null when the run is complete. */
+export function nextInRun(exp) {
+  return RUN_ORDER.find((id) => !runStep(exp, id)?.approved) || null;
+}
+
+/** A role may run once every role before it is approved. */
+export function canRun(exp, roleId) {
+  const i = RUN_ORDER.indexOf(roleId);
+  return i >= 0 && RUN_ORDER.slice(0, i).every((id) => runStep(exp, id)?.approved);
+}
+
+/**
+ * Record a role's output. Re-running a role makes everything after it stale,
+ * so later steps are cleared — they were built on the old hand-off.
+ */
+export function recordOutput(exp, roleId, output, now = new Date()) {
+  const run = { ...(exp.run || {}) };
+  for (const id of RUN_ORDER.slice(RUN_ORDER.indexOf(roleId) + 1)) delete run[id];
+  run[roleId] = { output, note: run[roleId]?.note || '', approved: false, at: now.toISOString() };
+  return { ...exp, run };
+}
+
+/** The Explorer signs off, optionally steering the next agent with a note. */
+export function approveStep(exp, roleId, { output, note = '' } = {}) {
+  const step = runStep(exp, roleId);
+  if (!step) throw new Error(`${roleId} has not run yet`);
+  const run = { ...exp.run, [roleId]: { ...step, output: output ?? step.output, note, approved: true } };
+  return { ...exp, run };
+}
+
+/** The role prompt plus the approved work so far and the Explorer's direction. */
+export function handoffPrompt(roleId, exp, ctx) {
+  // Roles outside the run (the Builder) receive all approved work.
+  const idx = RUN_ORDER.indexOf(roleId);
+  const prior = (idx < 0 ? RUN_ORDER : RUN_ORDER.slice(0, idx))
+    .map((id) => ({ id, step: runStep(exp, id) }))
+    .filter(({ step }) => step?.approved);
+  if (!prior.length) return rolePrompt(roleId, exp, ctx);
+  const clip = (s) => (s.length > HANDOFF_CHARS ? `${s.slice(0, HANDOFF_CHARS)}… [trimmed]` : s);
+  const work = prior.map(({ id, step }) => {
+    const role = ROLES.find((r) => r.id === id);
+    return [`--- ${role.name.toUpperCase()} (approved by the Explorer) ---`, clip(step.output.trim()),
+      step.note.trim() ? `EXPLORER'S DIRECTION: ${step.note.trim()}` : null].filter(Boolean).join('\n');
+  });
+  return `${rolePrompt(roleId, exp, ctx)}\n\nWORK SO FAR — build on it, don't repeat it. The Explorer's direction overrides earlier agents.\n\n${work.join('\n\n')}`;
+}
+
+/** System prompt for an in-app run step. */
+export const RUN_SYSTEM = 'You are one agent in a small team directed by a human Explorer who decides what gets built. '
+  + 'Do your role only. Plain text, short "- " bullets and headings in CAPS, under 300 words. '
+  + 'Never invent statistics, organisations or quotes; mark uncertain claims as uncertain.';

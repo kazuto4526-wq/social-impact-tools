@@ -165,3 +165,60 @@ test('critiqueRequest sends the brief only', () => {
   assert.match(r.userMessage, /WHAT SHOULD EXIST: Tutor pack/);
   assert.doesNotMatch(r.userMessage, /minutes|reflection/i);
 });
+
+// ---------- Live run ----------
+import { RUN_ORDER, nextInRun, canRun, recordOutput, approveStep, handoffPrompt } from './conduct.js';
+
+test('live run: order, gating, approval and hand-off', () => {
+  assert.ok(RUN_ORDER.every((id) => ROLES.some((r) => r.id === id)));
+  assert.ok(!RUN_ORDER.includes('builder'));
+  let x = { ...newExpedition(reading, 'Tutor pack'), forWhom: 'tutors' };
+  assert.equal(nextInRun(x), 'scout');
+  assert.ok(canRun(x, 'scout') && !canRun(x, 'architect'));
+  assert.throws(() => approveStep(x, 'scout'));
+
+  x = recordOutput(x, 'scout', 'Three similar packs exist; none offline.');
+  assert.ok(!canRun(x, 'architect'), 'output alone is not approval');
+  x = approveStep(x, 'scout', { note: 'Focus on printable, no phones.' });
+  assert.ok(canRun(x, 'architect'));
+  assert.equal(nextInRun(x), 'architect');
+
+  const p = handoffPrompt('architect', x, ctx);
+  assert.match(p, /You are the Architect/);
+  assert.match(p, /--- SCOUT \(approved by the Explorer\) ---\nThree similar packs exist/);
+  assert.match(p, /EXPLORER'S DIRECTION: Focus on printable, no phones\./);
+  assert.equal(handoffPrompt('scout', x, ctx), rolePrompt('scout', x, ctx));
+
+  // Editing the output on approval is what gets handed off.
+  x = recordOutput(x, 'architect', 'draft plan');
+  x = approveStep(x, 'architect', { output: 'edited plan' });
+  assert.match(handoffPrompt('critic', x, ctx), /edited plan/);
+  assert.doesNotMatch(handoffPrompt('critic', x, ctx), /draft plan/);
+});
+
+test('live run: the Builder (outside the run) gets every approved step', () => {
+  let x = newExpedition(reading, 'Tutor pack');
+  for (const id of RUN_ORDER) x = approveStep(recordOutput(x, id, `${id} out`), id);
+  assert.equal(nextInRun(x), null);
+  const p = handoffPrompt('builder', x, ctx);
+  for (const id of RUN_ORDER) assert.match(p, new RegExp(`${id} out`));
+});
+
+test('live run: re-running a step clears everything after it', () => {
+  let x = newExpedition(reading, 'Tutor pack');
+  for (const id of ['scout', 'architect', 'critic']) x = approveStep(recordOutput(x, id, `${id} out`), id);
+  assert.equal(nextInRun(x), 'measurer');
+  x = recordOutput(x, 'architect', 'new plan');
+  assert.equal(x.run.scout.approved, true);
+  assert.equal(x.run.architect.approved, false);
+  assert.equal(x.run.critic, undefined);
+  assert.equal(nextInRun(x), 'architect');
+});
+
+test('live run: long hand-offs are trimmed', () => {
+  let x = newExpedition(reading, 'Tutor pack');
+  x = approveStep(recordOutput(x, 'scout', 'a'.repeat(5000)), 'scout');
+  const p = handoffPrompt('architect', x, ctx);
+  assert.match(p, /… \[trimmed\]/);
+  assert.ok(p.length < 5000);
+});

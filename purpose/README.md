@@ -35,13 +35,20 @@ their time, sized to the life they have.
    - get **the orchestra**: ready-to-paste prompts for six AI agent roles
      (Scout, Architect, Builder, Critic, Measurer, Storyteller), each carrying
      your North Star and brief, plus the whole brief as Markdown;
+   - or play it **live in the app**: Scout → Architect → Critic → Measurer →
+     Storyteller run one at a time on the AI Worker. Nothing moves on until
+     the Explorer approves it; their edits and written direction are what the
+     next agent receives, and re-running a step clears the ones after it.
+     The Builder stays copy-paste (real building happens in a coding agent),
+     and its prompt then carries every approved step;
    - optionally **Ask the Critic** — an in-app AI critique of the brief;
    - move it through Charting → Conducting → Shipped → Learning and record
      **what changed for real people**.
 
 Everything is stored in `localStorage`. No account, no server, no tracking. The one
-exception is the optional “Ask the Critic” button, which sends that single
-brief (never the profile or logs) to the AI Worker also used by Impact Compass.
+exceptions are the optional “Ask the Critic” and live-run buttons, which send
+that expedition's brief and approved hand-offs (never the profile or logs) to
+the AI Worker also used by Impact Compass.
 Export/import a JSON backup to move devices.
 
 ## Files
@@ -50,7 +57,7 @@ Export/import a JSON backup to move devices.
 | --- | --- |
 | `data.js` | Content: themes, values, strengths, capacity levels, prompts, and the 16 purpose problems. Editorial rules are in its header. |
 | `engine.js` | Pure logic (no DOM): theme scoring, problem ranking, purpose statement, plan building, streaks. |
-| `conduct.js` | Pure logic for Conduct: usefulness gate, stages, agent role prompts, Markdown brief, critique request. |
+| `conduct.js` | Pure logic for Conduct: usefulness gate, stages, agent role prompts, Markdown brief, critique request, and the live run (order, gating, approvals, hand-off prompts). |
 | `app.js` | Hash-routed UI (`#/`, `#/discover`, `#/results`, `#/problems`, `#/problem/<id>`, `#/work`, `#/conduct`, `#/expedition/<id>`). |
 | `app.css` | Styles, light + dark. |
 | `sw.js` | Service worker. **Bump `CACHE_NAME` whenever any asset changes** — assets are cache-first. |
@@ -89,8 +96,6 @@ Then copy `.github/workflows/purpose-test.yml` across, dropping the
 
 ## Ideas for next steps
 
-- Run the orchestra in-app: chain Scout → Architect → Critic through the
-  Worker, with the Explorer approving each hand-off.
 - Optional AI coach for reflections and the purpose statement.
 - Accountability buddy: share a read-only progress link with a friend.
 - Local opportunities: link problems to volunteering/job boards by location.

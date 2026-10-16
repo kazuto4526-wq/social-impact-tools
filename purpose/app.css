@@ -202,3 +202,19 @@ select { width: 100%; font: inherit; color: var(--ink); background: var(--bg); b
 .nav a { white-space: nowrap; }
 @media (max-width: 420px) { .nav a { padding: 6px 9px; font-size: .95rem; } .top { gap: 6px; } }
 main:focus-visible { outline: none; }
+
+/* ---------- Live run ---------- */
+.live-run { margin-top: 24px; border-top: 1px solid var(--line); padding-top: 8px; }
+.run-steps { list-style: none; padding: 0; margin: 0; display: grid; gap: 10px; }
+.run-step { border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; }
+.run-step .actions { margin-top: 8px; }
+.run-step .field { margin: 10px 0; }
+.run-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
+.run-status { font-size: .8rem; padding: 2px 10px; border-radius: 999px; background: var(--line); color: var(--muted); }
+.run-step.approved { border-color: var(--accent); }
+.run-step.approved .run-status { background: var(--accent); color: var(--accent-ink); }
+.run-step.review { border-color: var(--gold); }
+.run-step.review .run-status { background: var(--gold); color: #1d1405; }
+.run-step.waiting { opacity: .6; }
+.run-step textarea[readonly], .run-step input[readonly] { opacity: .85; }
+.notice-inline { border-left: 4px solid var(--gold); padding: 8px 12px; background: var(--bg); border-radius: 6px; }

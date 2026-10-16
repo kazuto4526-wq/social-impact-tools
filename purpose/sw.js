@@ -1,5 +1,5 @@
 // Bump CACHE_NAME whenever any asset below changes — assets are cache-first.
-const CACHE_NAME = 'purpose-v3';
+const CACHE_NAME = 'purpose-v4';
 const ASSETS = ['./', 'index.html', 'app.css', 'app.js', 'engine.js', 'conduct.js', 'data.js', 'icon.svg', 'manifest.webmanifest'];
 
 self.addEventListener('install', (e) => {
